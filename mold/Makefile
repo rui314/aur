@@ -1,16 +1,14 @@
 CC = clang
 CXX = clang++
 
-MIMALLOC_LIB = mimalloc/out/release/libmimalloc.a
-GIT_HASH = $(shell [ -d .git ] && git rev-parse HEAD)
+GIT_HASH ?= $(shell [ -d .git ] && git rev-parse HEAD)
 
 CPPFLAGS = -g -Imimalloc/include -pthread -std=c++20 \
-           -Wno-deprecated-volatile \
            -DMOLD_VERSION=\"0.9.1\" \
            -DGIT_HASH=\"$(GIT_HASH)\" \
 	   $(EXTRA_CPPFLAGS)
 LDFLAGS += $(EXTRA_LDFLAGS)
-LIBS = -Wl,-as-needed -lcrypto -pthread -ltbb -lz -lxxhash -ldl
+LIBS = -Wl,-as-needed -lcrypto -pthread -lz -lxxhash -ldl
 OBJS = main.o object_file.o input_sections.o output_chunks.o \
        mapfile.o perf.o linker_script.o archive_file.o output_file.o \
        subprocess.o gc_sections.o icf.o symbols.o cmdline.o filepath.o \
@@ -41,11 +39,11 @@ else
   # By default, we want to use mimalloc as a memory allocator.
   # Since replacing the standard malloc is not compatible with ASAN,
   # we do that only when ASAN is not enabled.
-  LDFLAGS += -Wl,-whole-archive $(MIMALLOC_LIB) -Wl,-no-whole-archive
-  ifndef SYSTEM_MIMALLOC
-    LIBS += -Wl,-whole-archive $(MIMALLOC_LIB) -Wl,-no-whole-archive
-  else
+  ifdef SYSTEM_MIMALLOC
     LIBS += -lmimalloc
+  else
+    MIMALLOC_LIB = mimalloc/out/release/libmimalloc.a
+    LIBS += -Wl,-whole-archive $(MIMALLOC_LIB) -Wl,-no-whole-archive
   endif
 endif
 
@@ -54,13 +52,17 @@ ifeq ($(TSAN), 1)
   LDFLAGS  += -fsanitize=thread
 endif
 
-all: mold mold-wrapper.so
-
-ifdef SYSTEM_MIMALLOC
-  undefine MIMALLOC_LIB
+ifdef SYSTEM_TBB
+  LIBS += -ltbb
+else
+  TBB_LIB = oneTBB/out/libs/libtbb.a
+  LIBS += $(TBB_LIB)
+  CPPFLAGS += -IoneTBB/include
 endif
 
-mold: $(OBJS) $(MIMALLOC_LIB)
+all: mold mold-wrapper.so
+
+mold: $(OBJS) $(MIMALLOC_LIB) $(TBB_LIB)
 	$(CXX) $(CXXFLAGS) $(OBJS) -o $@ $(LDFLAGS) $(LIBS)
 
 mold-wrapper.so: mold-wrapper.c Makefile
@@ -70,24 +72,38 @@ $(OBJS): mold.h elf.h Makefile
 
 $(MIMALLOC_LIB):
 	mkdir -p mimalloc/out/release
-	(cd mimalloc/out/release; CFLAGS=-DMI_USE_ENVIRON=0 CC=$(CC) LDFLAGS= cmake ../..)
-	$(MAKE) -C mimalloc/out/release
+	(cd mimalloc/out/release; CFLAGS=-DMI_USE_ENVIRON=0 cmake ../..)
+	$(MAKE) -C mimalloc/out/release mimalloc-static
+
+$(TBB_LIB):
+	mkdir -p oneTBB/out
+	(cd oneTBB/out; cmake -DBUILD_SHARED_LIBS=OFF -DTBB_TEST=OFF -DCMAKE_CXX_FLAGS=-D__TBB_DYNAMIC_LOAD_ENABLED=0 ..)
+	$(MAKE) -C oneTBB/out tbb
+	(cd oneTBB/out; ln -sf *_relwithdebinfo libs)
 
 test tests check: all
 	 $(MAKE) -C test --output-sync --no-print-directory
 
-install:
-	install -Dm 755 mold $(PREFIX)/bin/mold
+install: all
+	install -m 755 -d $(DESTDIR)$(PREFIX)/bin
+	install -m 755 mold $(DESTDIR)$(PREFIX)/bin
+	strip $(DESTDIR)$(PREFIX)/bin/mold
 
-	install -m 755 -d $(PREFIX)/lib/mold
-	install -m 644 mold-wrapper.so $(PREFIX)/lib/mold
-	install -Dm 644 docs/mold.1 $(PREFIX)/share/man/man1/mold.1
+	install -m 755 -d $(DESTDIR)$(PREFIX)/lib/mold
+	install -m 644 mold-wrapper.so $(DESTDIR)$(PREFIX)/lib/mold
+	strip $(DESTDIR)$(PREFIX)/lib/mold/mold-wrapper.so
+
+	install -m 755 -d $(DESTDIR)$(PREFIX)/share/man/man1
+	install -m 644 docs/mold.1 $(DESTDIR)$(PREFIX)/share/man/man1
+	rm -f $(DESTDIR)$(PREFIX)/share/man/man1/mold.1.gz
+	gzip -9 $(DESTDIR)$(PREFIX)/share/man/man1/mold.1
 
 uninstall:
-	rm -rf $(PREFIX)/bin/mold $(PREFIX)/share/man/man1/mold.1.gz \
-	       $(PREFIX)/lib/mold
+	rm -f $(DESTDIR)$(PREFIX)/bin/mold
+	rm -f $(DESTDIR)$(PREFIX)/share/man/man1/mold.1.gz
+	rm -rf $(DESTDIR)$(PREFIX)/lib/mold
 
 clean:
-	rm -rf *.o *~ mold mold-wrapper.so test/tmp
+	rm -rf *.o *~ mold mold-wrapper.so test/tmp mimalloc/out oneTBB/out
 
 .PHONY: all test tests check clean $(TESTS)

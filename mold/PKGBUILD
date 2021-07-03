@@ -6,20 +6,20 @@ pkgdesc='Fast linker'
 arch=(x86_64)
 url='https://github.com/rui314/mold'
 license=('unknown')
-depends=(xxhash mimalloc)
+depends=(xxhash)
 makedepends=(clang cmake git)
-source=("https://github.com/rui314/mold/archive/refs/tags/v$_pkgver.tar.gz" Makefile)
-sha256sums=('02b156de6cd2d94fea4eed9748a7c96955673d810ec672359f603f2f90e2990d'
-            '489bce8b59fb6b1eaeeb31edaed0f73b9160a1c4bdc3e70be9f81dacc4b1745a')
+source=("https://github.com/rui314/mold/archive/6935272033b30d7314fe3a965177547bf9ce2aed.tar.gz" Makefile)
+sha256sums=('0f4ea52e8e3e95ea3bade1f7820964137499b32ebbc944eaa63ef5ab156ea727'
+            '7207016f7d6ebe0c3e7fafbed5fc5eb4a8f675401a8e25d12c37d9e356435d31')
 
 build() {
-  cd "$pkgname-$_pkgver"
+  cd "$pkgname-6935272033b30d7314fe3a965177547bf9ce2aed"
   CXXFLAGS+=" -fPIC"
   LDFLAGS+=" -pie"
-  make -f "$srcdir/Makefile" SYSTEM_MIMALLOC=1
+  make -j -f "$srcdir/Makefile"
 }
 
 package() {
-  cd "$pkgname-$_pkgver"
+  cd "$pkgname-6935272033b30d7314fe3a965177547bf9ce2aed"
   make -f "$srcdir/Makefile" install PREFIX="$pkgdir/usr"
 }
